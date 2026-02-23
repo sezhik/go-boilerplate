@@ -1,0 +1,77 @@
+services:
+  pgbouncer:
+    image: edoburu/pgbouncer:v1.24.1-p1
+    container_name: pgbouncer
+    depends_on: [ postgres ]
+    environment:
+      - DB_USER=${PG_USER}
+      - DB_PASSWORD=${PG_PASS}
+      - DB_HOST=postgres
+      - POOL_MODE=transaction
+      - MAX_CLIENT_CONN=30
+      - DEFAULT_POOL_SIZE=10
+      - ADMIN_USERS=${PG_USER}
+      - AUTH_TYPE=plain
+    ports:
+      - "6432:5432"
+
+  postgres:
+    image: postgres:17-trixie
+    container_name: postgres
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PG_USER} -d ${PG_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    environment:
+      POSTGRES_USER: ${PG_USER}
+      POSTGRES_PASSWORD: ${PG_PASS}
+      POSTGRES_DB: ${PG_DB}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  app-dev:
+    container_name: app-dev
+    build:
+      context: .
+      target: dev
+    develop:
+      watch:
+        - path: .
+          action: sync
+          target: /app
+    depends_on: [ pgbouncer ]
+    env_file: [ .env ]
+    profiles: ["dev"]
+    logging:
+      driver: "json-file"
+      options:
+        max-size: 10m
+        max-file: 5
+
+  app:
+    container_name: app
+    build:
+      context: .
+      target: prod
+    depends_on: [ pgbouncer ]
+    env_file: [ .env ]
+    profiles: ["prod"]
+ 
+  migration:
+    image: migrate/migrate
+    container_name: migrator
+    depends_on: 
+      postgres: { condition: service_healthy }
+    volumes:
+      - ./database/migrations:/migrations
+    command: [
+      "-path", "/migrations",
+      "-database", "postgres://${PG_USER}:${PG_PASS}@postgres:5432/${PG_DB}?sslmode=disable",
+      "up"
+    ]
+
+volumes:
+  postgres_data:
