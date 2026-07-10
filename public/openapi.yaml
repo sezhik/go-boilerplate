@@ -1,0 +1,81 @@
+openapi: 3.0.3
+info:
+  title: go-boilerplate API
+  description: >-
+    Публичный HTTP-контракт сервиса. При изменениях публичных роутов этот файл
+    обновляется в рамках той же задачи. Admin-only маршруты в спецификацию не
+    включаются.
+  version: 0.1.0
+
+servers:
+  - url: http://localhost:8080
+    description: Local dev stack (через Caddy)
+
+paths:
+  /_health:
+    get:
+      summary: Health check
+      operationId: getHealth
+      responses:
+        "200":
+          description: Сервис жив
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+                  service:
+                    type: string
+                    example: go-boilerplate
+
+  /api/examples:
+    get:
+      summary: Список examples
+      operationId: listExamples
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 10
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        "200":
+          description: Страница examples
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: integer
+                          format: int64
+                        name:
+                          type: string
+                  limit:
+                    type: integer
+                  offset:
+                    type: integer
+                  total:
+                    type: integer
+        "500":
+          description: Внутренняя ошибка
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string

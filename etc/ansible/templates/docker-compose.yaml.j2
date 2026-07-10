@@ -1,0 +1,122 @@
+name: ${COMPOSE_PROJECT_NAME:-{{ project_name }}}
+
+services:
+  pgbouncer:
+    image: edoburu/pgbouncer:v1.24.1-p1
+    depends_on:
+      - postgres
+    environment:
+      DB_USER: ${PG_USER}
+      DB_PASSWORD: ${PG_PASS}
+      DB_HOST: postgres
+      POOL_MODE: transaction
+      MAX_CLIENT_CONN: 30
+      DEFAULT_POOL_SIZE: 10
+      ADMIN_USERS: ${PG_USER}
+      AUTH_TYPE: plain
+    ports:
+      - "6432:5432"
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:17-trixie
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PG_USER} -d ${PG_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    environment:
+      POSTGRES_USER: ${PG_USER}
+      POSTGRES_PASSWORD: ${PG_PASS}
+      POSTGRES_DB: ${PG_DB}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+
+  node-exporter:
+    image: prom/node-exporter:v1.9.1
+    command:
+      - --path.procfs=/host/proc
+      - --path.sysfs=/host/sys
+      - --path.rootfs=/rootfs
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    restart: unless-stopped
+
+  app:
+    image: {{ deploy_image }}
+    depends_on:
+      - pgbouncer
+    env_file:
+      - .env
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+    ports:
+      - "127.0.0.1:9090:9090"
+    volumes:
+      - ./etc/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:12.1.1
+    environment:
+      GF_SERVER_DOMAIN: ${GRAFANA_HOST:-{{ app_domain }}}
+      GF_SERVER_ROOT_URL: ${GRAFANA_ROOT_URL:-http://127.0.0.1:3000}
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - ./etc/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./etc/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2.10.2
+    depends_on:
+      - app
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      SERVICE_HOST: ${SERVICE_HOST:-{{ app_domain }}}
+      APP_UPSTREAM: app:${SERVICE_PORT:-9000}
+    volumes:
+      - ./etc/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./public:/srv/public:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    restart: unless-stopped
+
+  migration:
+    image: migrate/migrate
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./database/migrations:/migrations
+    command:
+      - -path
+      - /migrations
+      - -database
+      - postgres://${PG_USER}:${PG_PASS}@postgres:5432/${PG_DB}?sslmode=disable
+      - up
+
+volumes:
+  postgres_data:
+  caddy_data:
+  caddy_config:
+  prometheus_data:
+  grafana_data:

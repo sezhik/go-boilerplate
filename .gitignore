@@ -1,3 +1,4 @@
 .env
+.env.prod
 database/pgbouncer/userlist.txt
 tmp

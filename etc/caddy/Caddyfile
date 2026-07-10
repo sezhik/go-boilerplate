@@ -1,0 +1,10 @@
+{$SERVICE_HOST} {
+    handle_path /s/* {
+        root * /srv/public
+        file_server
+    }
+
+    handle {
+        reverse_proxy {$APP_UPSTREAM}
+    }
+}

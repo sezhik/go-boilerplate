@@ -1,0 +1,21 @@
+project_name: go-boilerplate
+app_domain: example.com
+app_dir: /opt/go-boilerplate
+deploy_image: go-boilerplate-app:latest
+docker_platform: linux/amd64
+
+local_project_root: "{{ playbook_dir }}/../../.."
+local_env_file: "{{ local_project_root }}/.env.prod"
+local_public_dir: "{{ local_project_root }}/public"
+local_caddyfile: "{{ local_project_root }}/etc/caddy/Caddyfile"
+local_migrations_dir: "{{ local_project_root }}/database/migrations"
+local_build_dir: "{{ local_project_root }}/tmp/deploy"
+local_image_archive: "{{ local_build_dir }}/{{ project_name }}-image.tar"
+
+remote_image_archive: "{{ app_dir }}/{{ project_name }}-image.tar"
+remote_env_file: "{{ app_dir }}/.env"
+remote_compose_file: "{{ app_dir }}/docker-compose.yaml"
+
+docker_install_script_url: https://get.docker.com
+cleanup_local_image_archive: true
+cleanup_remote_image_archive: true

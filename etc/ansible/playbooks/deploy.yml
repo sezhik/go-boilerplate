@@ -1,0 +1,166 @@
+---
+- name: Build release artifacts on controller and deploy to VPS
+  hosts: vps
+  gather_facts: false
+  become: true
+  vars:
+    compose_cmd: >-
+      docker compose
+      --project-name {{ project_name }}
+      --project-directory {{ app_dir }}
+      --env-file {{ remote_env_file }}
+      -f {{ remote_compose_file }}
+  pre_tasks:
+    - name: Ensure local build directories exist
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0755"
+      loop:
+        - "{{ local_build_dir }}"
+        - "{{ local_build_dir }}/public"
+      delegate_to: localhost
+      become: false
+      run_once: true
+
+    - name: Copy shared public assets to local build directory
+      ansible.builtin.command: >-
+        rsync -a --delete {{ local_public_dir }}/ {{ local_build_dir }}/public/
+      delegate_to: localhost
+      become: false
+      run_once: true
+      changed_when: true
+
+    - name: Build production Docker image locally
+      ansible.builtin.command: >-
+        docker buildx build
+        --platform {{ docker_platform }}
+        --target prod
+        --load
+        -t {{ deploy_image }}
+        {{ local_project_root }}
+      delegate_to: localhost
+      become: false
+      run_once: true
+
+    - name: Save Docker image archive locally
+      ansible.builtin.command: >-
+        docker save -o {{ local_image_archive }} {{ deploy_image }}
+      delegate_to: localhost
+      become: false
+      run_once: true
+
+  tasks:
+    - name: Ensure remote app directories exist
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0755"
+      loop:
+        - "{{ app_dir }}"
+        - "{{ app_dir }}/etc"
+        - "{{ app_dir }}/etc/caddy"
+        - "{{ app_dir }}/etc/grafana"
+        - "{{ app_dir }}/etc/grafana/provisioning"
+        - "{{ app_dir }}/etc/grafana/provisioning/datasources"
+        - "{{ app_dir }}/etc/grafana/provisioning/dashboards"
+        - "{{ app_dir }}/etc/grafana/dashboards"
+        - "{{ app_dir }}/etc/prometheus"
+        - "{{ app_dir }}/database"
+
+    - name: Remove managed public directory before upload
+      ansible.builtin.file:
+        path: "{{ app_dir }}/public"
+        state: absent
+
+    - name: Remove managed migrations directory before upload
+      ansible.builtin.file:
+        path: "{{ app_dir }}/database/migrations"
+        state: absent
+
+    - name: Upload environment file
+      ansible.builtin.copy:
+        src: "{{ local_env_file }}"
+        dest: "{{ remote_env_file }}"
+        mode: "0600"
+
+    - name: Render Docker Compose file
+      ansible.builtin.template:
+        src: ../templates/docker-compose.yaml.j2
+        dest: "{{ remote_compose_file }}"
+        mode: "0644"
+
+    - name: Upload Caddyfile
+      ansible.builtin.copy:
+        src: "{{ local_caddyfile }}"
+        dest: "{{ app_dir }}/etc/caddy/Caddyfile"
+        mode: "0644"
+
+    - name: Upload Prometheus config
+      ansible.builtin.copy:
+        src: "{{ local_project_root }}/etc/prometheus/prometheus.yml"
+        dest: "{{ app_dir }}/etc/prometheus/prometheus.yml"
+        mode: "0644"
+
+    - name: Upload Grafana provisioning
+      ansible.builtin.copy:
+        src: "{{ local_project_root }}/etc/grafana/provisioning/"
+        dest: "{{ app_dir }}/etc/grafana/provisioning/"
+        mode: preserve
+
+    - name: Upload Grafana dashboards
+      ansible.builtin.copy:
+        src: "{{ local_project_root }}/etc/grafana/dashboards/"
+        dest: "{{ app_dir }}/etc/grafana/dashboards/"
+        mode: preserve
+
+    - name: Upload public assets
+      ansible.builtin.copy:
+        src: "{{ local_build_dir }}/public/"
+        dest: "{{ app_dir }}/public/"
+        mode: preserve
+
+    - name: Upload migrations
+      ansible.builtin.copy:
+        src: "{{ local_migrations_dir }}/"
+        dest: "{{ app_dir }}/database/migrations/"
+        mode: preserve
+
+    - name: Upload Docker image archive
+      ansible.builtin.copy:
+        src: "{{ local_image_archive }}"
+        dest: "{{ remote_image_archive }}"
+        mode: "0644"
+
+    - name: Load Docker image on VPS
+      ansible.builtin.command: docker load -i {{ remote_image_archive }}
+      register: docker_load
+      changed_when: docker_load.rc == 0
+
+    - name: Start postgres and pgbouncer
+      ansible.builtin.command: "{{ compose_cmd }} up -d postgres pgbouncer"
+
+    - name: Run database migrations
+      ansible.builtin.command: "{{ compose_cmd }} run --rm migration"
+
+    - name: Start application
+      ansible.builtin.command: "{{ compose_cmd }} up -d app node-exporter prometheus grafana"
+
+    - name: Recreate Caddy to pick up updated config and static files
+      ansible.builtin.command: "{{ compose_cmd }} up -d --force-recreate caddy"
+
+    - name: Remove remote image archive
+      ansible.builtin.file:
+        path: "{{ remote_image_archive }}"
+        state: absent
+      when: cleanup_remote_image_archive
+
+  post_tasks:
+    - name: Remove local image archive
+      ansible.builtin.file:
+        path: "{{ local_image_archive }}"
+        state: absent
+      delegate_to: localhost
+      become: false
+      run_once: true
+      when: cleanup_local_image_archive

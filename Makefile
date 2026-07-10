@@ -8,14 +8,21 @@ build:
 
 .PHONY: reset
 reset:
-	docker compose down -v
+	docker compose --profile dev down -v --remove-orphans
 
 .PHONY: run
 run:
 	@echo 'Running in hot-reload mode'
 	docker compose --profile dev up --build --watch
 
+.PHONY: smoke
+smoke:
+	go test -tags=smoke -count=1 -v ./test/smoke/...
 
 .PHONY: migration-down
 migration-down:
 	docker run -v ./database/migrations:/migrations --network host migrate/migrate -path /migrations/ -database postgres://bot:admin@localhost:5432/master?sslmode=disable down -all
+
+.PHONY: deploy
+deploy:
+	ansible-playbook -i etc/ansible/inventory.ini etc/ansible/playbooks/deploy.yml
